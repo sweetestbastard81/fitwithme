@@ -384,9 +384,9 @@ function tagihanOps(c, mulai) {
 }
 
 function waLink(s) {
-  const msg = 'Halo ' + s.nama + '! 👋\n\nPengingat dari ' + NAMA_USAHA + ': kamu masih punya ' + s.sisa +
+  const msg = 'Halo, kak ' + s.nama + '! 👋\n\nSekedar mengingatkan bahwa kakak masih punya ' + s.sisa +
     ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI + ' hari ini (sampai ' + fmtTgl(s.selesai) +
-    ').\n\nYuk jadwalkan sesi latihanmu! 💪';
+    ').\n\nYuk segera jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya! 💪';
   return 'https://wa.me/' + waNumber(s.wa) + '?text=' + encodeURIComponent(msg);
 }
 
