@@ -50,6 +50,9 @@
   .bar { height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin-top:8px; }
   .bar > div { height:100%; background:var(--brand); }
   .bar.over > div { background:var(--amber); }
+  .jclient { border-top:1px solid var(--line); padding:8px 0 4px; margin-top:8px; }
+  .inl { display:flex; align-items:center; gap:10px; }
+  .name { font-weight:700; }
 </style>
 </head>
 <body>
@@ -361,9 +364,9 @@ function tagihanOps(c, mulai) {
 }
 
 function waLink(s) {
-  const msg = 'Halo kak ' + s.nama + '! 👋\n\nSekedar mengingatkan kalo kakak masih punya ' + s.sisa +
+  const msg = 'Halo kak ' + s.nama + '! 👋\n\nSekedar mengingatkan bahwa kakak masih punya ' + s.sisa +
     ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI + ' hari ini (sampai ' + fmtTgl(s.selesai) +
-    ').\n\nYuk jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya! 💪';
+    ').\n\nYuk segera jadwalkan sesi latihan sebelum hangus. Ditunggu konfirmasinya! 💪';
   return 'https://wa.me/' + waNumber(s.wa) + '?text=' + encodeURIComponent(msg);
 }
 
@@ -735,6 +738,58 @@ function reschedCard(j) {
     el('button', { class: 'link', onclick: () => { RESCH_ID = null; render(); } }, 'Batal'));
 }
 
+// Handler perubahan status satu sesi (trainer)
+function statusHandler(j) {
+  return async v => {
+    await updateDoc(doc(db, 'jadwal', j.id), { status: v });
+    const c = S.clients.find(x => x.email === j.clientEmail);
+    if (v === 'Selesai' && c && Number(c.coaching) > 0 && !S.visit.some(x => x.jadwalId === j.id)
+        && confirm('Catat sebagai 1 visit untuk ' + j.clientNama + '?')) {
+      await addDoc(collection(db, 'visit'), { clientEmail: j.clientEmail, clientNama: j.clientNama, tanggal: j.tanggal, catatan: j.jenis || '', jadwalId: j.id });
+    }
+  };
+}
+
+// Tandai semua sesi (yang masih Terjadwal) pada satu tanggal sebagai Selesai
+function selesaiSemua(list) {
+  if (!confirm('Tandai ' + list.length + ' sesi sebagai Selesai?')) return;
+  const perluVisit = list.filter(j => {
+    const c = S.clients.find(x => x.email === j.clientEmail);
+    return c && Number(c.coaching) > 0 && !S.visit.some(v => v.jadwalId === j.id);
+  });
+  const catat = perluVisit.length > 0 && confirm('Catat juga sebagai visit untuk: ' + perluVisit.map(j => j.clientNama).join(', ') + '?');
+  const ops = list.map(j => b => b.update(doc(db, 'jadwal', j.id), { status: 'Selesai' }));
+  if (catat) perluVisit.forEach(j => ops.push(b => b.set(doc(collection(db, 'visit')),
+    { clientEmail: j.clientEmail, clientNama: j.clientNama, tanggal: j.tanggal, catatan: j.jenis || '', jadwalId: j.id })));
+  act(() => runBatched(ops));
+}
+
+// Satu kartu per tanggal, berisi semua client pada tanggal itu (tampilan trainer)
+function dateCard(tgl, list) {
+  list = [...list].sort((a, b) => (a.mulai + a.clientNama).localeCompare(b.mulai + b.clientNama));
+  const waktu = [...new Set(list.map(j => j.mulai + '-' + j.selesai))];
+  const sameTime = waktu.length === 1;
+  const pending = list.filter(j => j.status === 'Terjadwal');
+  const kids = [
+    el('div', { class: 'row' },
+      el('b', {}, hariTgl(tgl) + (sameTime ? ' · ' + waktu[0] : '')),
+      pending.length > 1 ? el('button', { class: 'link', onclick: () => selesaiSemua(pending) }, 'Semua selesai') : null)
+  ];
+  list.forEach(j => {
+    const detail = [j.jenis, j.lokasi].filter(Boolean).join(' · ');
+    kids.push(el('div', { class: 'jclient' },
+      el('div', { class: 'row' },
+        el('div', {}, el('span', { class: 'name' }, j.clientNama), sameTime ? null : el('span', { class: 'muted' }, ' · ' + j.mulai + '-' + j.selesai)),
+        el('div', { class: 'inl' },
+          el('div', { class: 'item' }, statusSelect(['Terjadwal', 'Selesai', 'Batal'], j.status, statusHandler(j))),
+          delBtn('jadwal', j.id))),
+      detail ? el('div', { class: 'muted' }, detail) : null,
+      j.catatan ? el('div', { class: 'muted' }, 'Catatan: ' + j.catatan) : null,
+      j.diubahClient ? el('div', { class: 'muted' }, '↻ Diubah client, sebelumnya ' + hariTgl(j.tanggalAsal) + ' · ' + j.mulaiAsal + '-' + j.selesaiAsal) : null));
+  });
+  return el('div', { class: 'card' }, kids);
+}
+
 function viewJadwal() {
   const out = [];
   const T = isTrainer();
@@ -743,26 +798,26 @@ function viewJadwal() {
     else out.push(addJadwalCard());
   }
   if (!S.jadwal.length) out.push(el('div', { class: 'empty' }, 'Belum ada jadwal.'));
+
+  if (T) {
+    // Trainer: satu kartu per tanggal, isi beberapa client
+    const groups = {};
+    S.jadwal.forEach(j => { (groups[j.tanggal] = groups[j.tanggal] || []).push(j); });
+    Object.keys(groups).sort().forEach(tgl => out.push(dateCard(tgl, groups[tgl])));
+    return out;
+  }
+
+  // Client: sesi milik sendiri
   S.jadwal.forEach(j => {
-    if (!T && RESCH_ID === j.id) { out.push(reschedCard(j)); return; }
-    const onStatus = async v => {
-      await updateDoc(doc(db, 'jadwal', j.id), { status: v });
-      const c = S.clients.find(x => x.email === j.clientEmail);
-      if (v === 'Selesai' && c && Number(c.coaching) > 0 && !S.visit.some(x => x.jadwalId === j.id)
-          && confirm('Catat sebagai 1 visit untuk ' + j.clientNama + '?')) {
-        await addDoc(collection(db, 'visit'), { clientEmail: j.clientEmail, clientNama: j.clientNama, tanggal: j.tanggal, catatan: j.jenis || '', jadwalId: j.id });
-      }
-    };
-    const canResched = !T && j.status === 'Terjadwal' && j.tanggal >= today();
+    if (RESCH_ID === j.id) { out.push(reschedCard(j)); return; }
+    const canResched = j.status === 'Terjadwal' && j.tanggal >= today();
     out.push(el('div', { class: 'card item' },
-      el('div', { class: 'row' }, el('b', {}, hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
-        T ? statusSelect(['Terjadwal', 'Selesai', 'Batal'], j.status, onStatus) : badgeFor(j.status)),
+      el('div', { class: 'row' }, el('b', {}, hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai), badgeFor(j.status)),
       j.jenis ? el('div', {}, j.jenis) : null,
-      el('div', { class: 'muted' }, [T ? j.clientNama : null, j.lokasi].filter(Boolean).join(' · ')),
+      j.lokasi ? el('div', { class: 'muted' }, j.lokasi) : null,
       j.catatan ? el('div', { class: 'muted' }, 'Catatan: ' + j.catatan) : null,
-      j.diubahClient ? el('div', { class: 'muted' }, '↻ Diubah client, sebelumnya ' + hariTgl(j.tanggalAsal) + ' · ' + j.mulaiAsal + '-' + j.selesaiAsal) : null,
-      canResched ? el('button', { class: 'link', onclick: () => { RESCH_ID = j.id; render(); } }, 'Ubah jadwal') : null,
-      T ? delBtn('jadwal', j.id) : null));
+      j.diubahClient ? el('div', { class: 'muted' }, '↻ Diubah, sebelumnya ' + hariTgl(j.tanggalAsal) + ' · ' + j.mulaiAsal + '-' + j.selesaiAsal) : null,
+      canResched ? el('button', { class: 'link', onclick: () => { RESCH_ID = j.id; render(); } }, 'Ubah jadwal') : null));
   });
   return out;
 }
