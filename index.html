@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fitwithme</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#1d2733; --muted:#6b7785; --brand:#1f4e78; --ok:#1e8e3e; --warn:#c5221f; --amber:#b06000; --line:#e3e7ec; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); font-size:15px; }
+  .wrap { max-width:640px; margin:0 auto; padding:12px 12px 40px; }
+  header { background:var(--brand); color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  header b { font-size:16px; } header small { display:block; opacity:.8; font-size:12px; }
+  header button { background:transparent; border:1px solid #fff8; color:#fff; border-radius:6px; padding:4px 10px; }
+  .tabs { display:flex; gap:6px; margin:12px 0; }
+  .tabs button { flex:1; padding:10px 4px; border:0; border-radius:8px; background:#e3e7ec; font-weight:600; color:var(--text); }
+  .tabs button.on { background:var(--brand); color:#fff; }
+  .card { background:var(--card); border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 1px 2px #0001; }
+  .card h3 { margin:0 0 4px; font-size:16px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .stat { background:var(--bg); border-radius:8px; padding:8px 10px; }
+  .stat small { display:block; color:var(--muted); font-size:12px; }
+  .stat b { font-size:16px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; background:#e8f0fe; color:var(--brand); }
+  .badge.ok { background:#e6f4ea; color:var(--ok); }
+  .badge.bad { background:#fce8e6; color:var(--warn); }
+  .badge.amber { background:#fef7e0; color:var(--amber); }
+  input, select { width:100%; padding:10px; margin:4px 0 8px; border:1px solid var(--line); border-radius:8px; font-size:15px; background:#fff; font-family:inherit; }
+  label { font-size:13px; color:var(--muted); }
+  button.primary { width:100%; padding:12px; border:0; border-radius:8px; background:var(--brand); color:#fff; font-size:15px; font-weight:600; }
+  button.link { background:none; border:0; color:var(--brand); padding:6px 0; font-size:14px; text-decoration:underline; }
+  button.del { background:none; border:0; color:var(--warn); font-size:12px; padding:2px 0; }
+  button:disabled { opacity:.6; }
+  .msg { min-height:20px; margin-top:8px; font-size:14px; color:var(--warn); }
+  .msg.info { color:var(--ok); }
+  details.card summary { font-weight:600; cursor:pointer; }
+  .item select { width:auto; margin:0; padding:4px 6px; font-size:13px; }
+  .empty { text-align:center; color:var(--muted); padding:20px; }
+  .bar { height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin-top:8px; }
+  .bar > div { height:100%; background:var(--brand); }
+</style>
+</head>
+<body>
+
+<div id="loadView" class="wrap muted" style="padding-top:80px;text-align:center">Memuat...</div>
+
+<div id="loginView" class="wrap" style="padding-top:60px;display:none">
+  <div class="card">
+    <h3 style="font-size:20px">Fitwithme</h3>
+    <p class="muted" id="loginHint">Masuk dengan email dan password.</p>
+    <label>Email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="nama@email.com">
+    <label>Password</label>
+    <input id="pass" type="password" autocomplete="current-password" placeholder="Minimal 6 karakter">
+    <button class="primary" id="authBtn">Masuk</button>
+    <div class="row" style="margin-top:8px">
+      <button class="link" id="switchBtn">Belum punya akun? Daftar</button>
+      <button class="link" id="resetBtn">Lupa password</button>
+    </div>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<div id="appView" style="display:none">
+  <header><div><b id="hdrName"></b><small id="hdrEmail"></small></div><button id="logoutBtn">Keluar</button></header>
+  <div class="wrap">
+    <div class="tabs" id="tabs"></div>
+    <div id="panel"></div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAzsNcK6gLRrSC8Q7LABnML9iXZ9gHRqbI",
+  authDomain: "fitwithme-28087.firebaseapp.com",
+  projectId: "fitwithme-28087",
+  storageBucket: "fitwithme-28087.firebasestorage.app",
+  messagingSenderId: "540323289071",
+  appId: "1:540323289071:web:3ae8b1841d72b914a3c81a"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const $ = id => document.getElementById(id);
+const rp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+const fmtTgl = iso => String(iso || '').split('-').reverse().join('/');
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+
+let S = { role: '', email: '', clients: [], jadwal: [], bayar: [] };
+let TAB = 'ringkasan';
+let registerMode = false;
+let busyAuth = false;   // true saat proses daftar, agar listener login tidak ikut campur
+
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const k in (props || {})) {
+    if (k === 'class') e.className = props[k];
+    else if (k.slice(0, 2) === 'on') e[k] = props[k];
+    else if (k === 'value') e.value = props[k];
+    else e.setAttribute(k, props[k]);
+  }
+  kids.flat().forEach(c => { if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c))); });
+  return e;
+}
+
+function show(view) {
+  ['loadView', 'loginView', 'appView'].forEach(v => $(v).style.display = (v === view ? 'block' : 'none'));
+}
+function setMsg(text, info) { $('loginMsg').textContent = text || ''; $('loginMsg').className = 'msg' + (info ? ' info' : ''); }
+
+function friendly(e) {
+  const m = {
+    'auth/invalid-credential': 'Email atau password salah.',
+    'auth/wrong-password': 'Email atau password salah.',
+    'auth/user-not-found': 'Email atau password salah.',
+    'auth/invalid-email': 'Format email tidak valid.',
+    'auth/email-already-in-use': 'Email sudah terdaftar. Coba masuk atau gunakan Lupa password.',
+    'auth/weak-password': 'Password minimal 6 karakter.',
+    'auth/too-many-requests': 'Terlalu banyak percobaan. Coba lagi nanti.',
+    'auth/network-request-failed': 'Tidak ada koneksi internet.',
+    'permission-denied': 'Akses ditolak oleh aturan database.'
+  };
+  return m[e.code] || ('Terjadi kesalahan: ' + (e.message || e));
+}
+
+// ---------- Auth ----------
+$('switchBtn').onclick = () => {
+  registerMode = !registerMode;
+  $('authBtn').textContent = registerMode ? 'Daftar' : 'Masuk';
+  $('switchBtn').textContent = registerMode ? 'Sudah punya akun? Masuk' : 'Belum punya akun? Daftar';
+  $('loginHint').textContent = registerMode
+    ? 'Daftar dengan email yang sama dengan yang didaftarkan trainer-mu.'
+    : 'Masuk dengan email dan password.';
+  setMsg('');
+};
+
+$('authBtn').onclick = async () => {
+  const email = $('email').value.trim(), pass = $('pass').value;
+  if (!email || !pass) return setMsg('Email dan password wajib diisi.');
+  $('authBtn').disabled = true; setMsg('');
+  try {
+    if (registerMode) {
+      busyAuth = true;
+      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      await sendEmailVerification(cred.user);
+      await signOut(auth);
+      busyAuth = false;
+      registerMode = false; // kembali ke mode masuk
+      $('authBtn').textContent = 'Masuk';
+      $('switchBtn').textContent = 'Belum punya akun? Daftar';
+      $('loginHint').textContent = 'Masuk dengan email dan password.';
+      setMsg('Akun dibuat. Cek email (juga folder spam), klik link verifikasi, lalu masuk di sini.', true);
+    } else {
+      await signInWithEmailAndPassword(auth, email, pass);
+    }
+  } catch (e) {
+    busyAuth = false;
+    setMsg(friendly(e));
+  }
+  $('authBtn').disabled = false;
+};
+
+$('pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('authBtn').click(); });
+
+$('resetBtn').onclick = async () => {
+  const email = $('email').value.trim();
+  if (!email) return setMsg('Isi email dulu, lalu ketuk Lupa password.');
+  try { await sendPasswordResetEmail(auth, email); setMsg('Link reset password dikirim ke email (cek folder spam).', true); }
+  catch (e) { setMsg(friendly(e)); }
+};
+
+$('logoutBtn').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, async user => {
+  if (busyAuth) return;
+  if (!user) { show('loginView'); return; }
+  show('loadView');
+  try {
+    await user.reload();
+    if (!user.emailVerified) {
+      try { await sendEmailVerification(user); } catch (e) {}
+      await signOut(auth);
+      show('loginView');
+      setMsg('Email belum diverifikasi. Link verifikasi dikirim ulang, cek email (juga spam), klik linknya, lalu masuk lagi.');
+      return;
+    }
+    await user.getIdToken(true);
+    await loadData(user);
+    TAB = 'ringkasan';
+    render();
+    show('appView');
+  } catch (e) {
+    await signOut(auth);
+    show('loginView');
+    setMsg(friendly(e));
+  }
+});
+
+// ---------- Data ----------
+async function loadData(user) {
+  const email = user.email.toLowerCase();
+  S = { role: 'client', email, clients: [], jadwal: [], bayar: [] };
+  const map = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
+  let trainer = false;
+  try {
+    S.clients = map(await getDocs(collection(db, 'clients')));
+    trainer = true;
+  } catch (e) {
+    if (e.code !== 'permission-denied') throw e;
+  }
+  if (trainer) {
+    S.role = 'trainer';
+    S.jadwal = map(await getDocs(collection(db, 'jadwal')));
+    S.bayar = map(await getDocs(collection(db, 'pembayaran')));
+  } else {
+    S.clients = map(await getDocs(query(collection(db, 'clients'), where('email', '==', email))));
+    S.jadwal = map(await getDocs(query(collection(db, 'jadwal'), where('clientEmail', '==', email))));
+    S.bayar = map(await getDocs(query(collection(db, 'pembayaran'), where('clientEmail', '==', email))));
+  }
+  S.jadwal.sort((a, b) => (a.tanggal + a.mulai).localeCompare(b.tanggal + b.mulai));
+  S.bayar.sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+}
+
+async function act(fn) {
+  try { await fn(); await loadData(auth.currentUser); render(); }
+  catch (e) { alert(friendly(e)); try { await loadData(auth.currentUser); render(); } catch (_) {} }
+}
+
+function summaryOf(c) {
+  const used = S.jadwal.filter(j => j.clientEmail === c.email && j.status === 'Selesai').length;
+  const paid = S.bayar.filter(b => b.clientEmail === c.email && b.status === 'Lunas').reduce((s, b) => s + Number(b.jumlah || 0), 0);
+  const total = Number(c.totalSesi || 0), harga = Number(c.harga || 0);
+  return { ...c, used, sisaSesi: total - used, total, harga, paid, tagihan: harga - paid };
+}
+
+// ---------- UI ----------
+function render() {
+  $('hdrName').textContent = S.role === 'trainer' ? 'Trainer' : (S.clients[0] ? 'Halo, ' + S.clients[0].nama : 'Fitwithme');
+  $('hdrEmail').textContent = S.email;
+  const tabs = [['ringkasan', 'Ringkasan'], ['jadwal', 'Jadwal'], ['bayar', 'Pembayaran']];
+  $('tabs').replaceChildren(...tabs.map(t => el('button', { class: TAB === t[0] ? 'on' : '', onclick: () => { TAB = t[0]; render(); } }, t[1])));
+  $('panel').replaceChildren(...(TAB === 'ringkasan' ? viewRingkasan() : TAB === 'jadwal' ? viewJadwal() : viewBayar()));
+}
+
+const stat = (l, v) => el('div', { class: 'stat' }, el('small', {}, l), el('b', {}, v));
+const val = id => $(id).value.trim();
+
+function viewRingkasan() {
+  const out = [];
+  if (S.role === 'trainer') {
+    const btn = el('button', { class: 'primary' }, 'Simpan client');
+    btn.onclick = () => {
+      const email = val('c_email').toLowerCase(), nama = val('c_nama');
+      if (!nama || !email) return alert('Nama dan email wajib diisi.');
+      btn.disabled = true;
+      act(() => addDoc(collection(db, 'clients'), {
+        nama, email, wa: val('c_wa'), paket: val('c_paket'),
+        totalSesi: Number(val('c_total') || 0), harga: Number(val('c_harga') || 0), tanggalMulai: val('c_mulai')
+      }));
+    };
+    out.push(el('details', { class: 'card' }, el('summary', {}, '+ Tambah client'),
+      el('label', {}, 'Nama'), el('input', { id: 'c_nama' }),
+      el('label', {}, 'Email (harus sama dengan email yang dipakai client untuk daftar)'), el('input', { id: 'c_email', type: 'email' }),
+      el('label', {}, 'No WhatsApp'), el('input', { id: 'c_wa', inputmode: 'tel' }),
+      el('label', {}, 'Nama paket'), el('input', { id: 'c_paket', placeholder: 'Contoh: Paket 12 Sesi' }),
+      el('label', {}, 'Total sesi'), el('input', { id: 'c_total', type: 'number', inputmode: 'numeric' }),
+      el('label', {}, 'Harga paket (Rp)'), el('input', { id: 'c_harga', type: 'number', inputmode: 'numeric' }),
+      el('label', {}, 'Tanggal mulai'), el('input', { id: 'c_mulai', type: 'date', value: today() }),
+      btn));
+  }
+  if (!S.clients.length) {
+    out.push(el('div', { class: 'empty' }, S.role === 'trainer'
+      ? 'Belum ada client. Tambahkan lewat tombol di atas.'
+      : 'Data kamu belum terdaftar. Hubungi trainer dan pastikan emailmu sudah didaftarkan.'));
+    return out;
+  }
+  S.clients.map(summaryOf).forEach(s => {
+    const pct = s.total > 0 ? Math.min(100, Math.round(s.used / s.total * 100)) : 0;
+    const lunas = s.tagihan <= 0;
+    out.push(el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('h3', {}, s.nama), el('span', { class: 'badge ' + (lunas ? 'ok' : 'bad') }, lunas ? 'Lunas' : 'Belum lunas')),
+      el('div', { class: 'muted' }, [s.paket, S.role === 'trainer' ? s.email : null].filter(Boolean).join(' · ')),
+      el('div', { class: 'bar' }, el('div', { style: 'width:' + pct + '%' })),
+      el('div', { class: 'muted', style: 'margin-top:4px' }, s.used + ' dari ' + s.total + ' sesi selesai'),
+      el('div', { class: 'grid' },
+        stat('Sisa sesi', s.sisaSesi), stat('Sisa tagihan', rp(Math.max(0, s.tagihan))),
+        stat('Total paket', rp(s.harga)), stat('Sudah dibayar', rp(s.paid)))));
+  });
+  return out;
+}
+
+function clientSelect(id) {
+  return el('select', { id }, S.clients.map(c => el('option', { value: c.email }, c.nama + ' (' + c.email + ')')));
+}
+function namaOf(email) { const c = S.clients.find(x => x.email === email); return c ? c.nama : email; }
+
+function statusSelect(list, current, onChange) {
+  const s = el('select', {}, list.map(v => el('option', { value: v }, v)));
+  s.value = current;
+  s.onchange = () => { s.disabled = true; act(() => onChange(s.value)); };
+  return s;
+}
+function badgeFor(status) {
+  const cls = { Selesai: 'ok', Lunas: 'ok', Batal: 'bad', Menunggu: 'amber' }[status] || '';
+  return el('span', { class: 'badge ' + cls }, status);
+}
+function delBtn(col, id) {
+  return el('button', { class: 'del', onclick: () => { if (confirm('Hapus data ini?')) act(() => deleteDoc(doc(db, col, id))); } }, 'Hapus');
+}
+
+function viewJadwal() {
+  const out = [];
+  const T = S.role === 'trainer';
+  if (T) {
+    if (!S.clients.length) out.push(el('div', { class: 'empty' }, 'Tambahkan client dulu di tab Ringkasan.'));
+    else {
+      const btn = el('button', { class: 'primary' }, 'Tambah jadwal');
+      btn.onclick = () => {
+        const tanggal = val('j_tgl'), mulai = val('j_mulai'), selesai = val('j_selesai');
+        if (!tanggal || !mulai || !selesai) return alert('Tanggal dan jam wajib diisi.');
+        const email = $('j_email').value;
+        btn.disabled = true;
+        act(() => addDoc(collection(db, 'jadwal'), {
+          clientEmail: email, clientNama: namaOf(email), tanggal, mulai, selesai,
+          jenis: val('j_jenis'), lokasi: val('j_lokasi'), catatan: val('j_catatan'), status: 'Terjadwal'
+        }));
+      };
+      out.push(el('details', { class: 'card' }, el('summary', {}, '+ Tambah jadwal'),
+        el('label', {}, 'Client'), clientSelect('j_email'),
+        el('label', {}, 'Tanggal'), el('input', { id: 'j_tgl', type: 'date', value: today() }),
+        el('label', {}, 'Jam mulai'), el('input', { id: 'j_mulai', type: 'time', value: '07:00' }),
+        el('label', {}, 'Jam selesai'), el('input', { id: 'j_selesai', type: 'time', value: '08:00' }),
+        el('label', {}, 'Jenis latihan'), el('input', { id: 'j_jenis', placeholder: 'Contoh: Strength - Upper Body' }),
+        el('label', {}, 'Lokasi'), el('input', { id: 'j_lokasi' }),
+        el('label', {}, 'Catatan'), el('input', { id: 'j_catatan' }),
+        btn));
+    }
+  }
+  if (!S.jadwal.length) out.push(el('div', { class: 'empty' }, 'Belum ada jadwal.'));
+  S.jadwal.forEach(j => out.push(el('div', { class: 'card item' },
+    el('div', { class: 'row' }, el('b', {}, fmtTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
+      T ? statusSelect(['Terjadwal', 'Selesai', 'Batal'], j.status, v => updateDoc(doc(db, 'jadwal', j.id), { status: v })) : badgeFor(j.status)),
+    el('div', {}, j.jenis),
+    el('div', { class: 'muted' }, [T ? j.clientNama : null, j.lokasi].filter(Boolean).join(' · ')),
+    j.catatan ? el('div', { class: 'muted' }, 'Catatan: ' + j.catatan) : null,
+    T ? delBtn('jadwal', j.id) : null)));
+  return out;
+}
+
+function viewBayar() {
+  const out = [];
+  const T = S.role === 'trainer';
+  if (T) {
+    if (!S.clients.length) out.push(el('div', { class: 'empty' }, 'Tambahkan client dulu di tab Ringkasan.'));
+    else {
+      const btn = el('button', { class: 'primary' }, 'Catat pembayaran');
+      btn.onclick = () => {
+        const jumlah = Number(val('b_jumlah'));
+        if (!(jumlah > 0)) return alert('Jumlah harus lebih dari 0.');
+        const email = $('b_email').value;
+        btn.disabled = true;
+        act(() => addDoc(collection(db, 'pembayaran'), {
+          clientEmail: email, clientNama: namaOf(email), tanggal: val('b_tgl'), jumlah,
+          metode: $('b_metode').value, ket: val('b_ket'), status: $('b_status').value
+        }));
+      };
+      const sel = (id, list) => el('select', { id }, list.map(m => el('option', { value: m }, m)));
+      out.push(el('details', { class: 'card' }, el('summary', {}, '+ Catat pembayaran'),
+        el('label', {}, 'Client'), clientSelect('b_email'),
+        el('label', {}, 'Tanggal'), el('input', { id: 'b_tgl', type: 'date', value: today() }),
+        el('label', {}, 'Jumlah (Rp)'), el('input', { id: 'b_jumlah', type: 'number', inputmode: 'numeric', min: '0' }),
+        el('label', {}, 'Metode'), sel('b_metode', ['Transfer', 'Tunai', 'E-Wallet']),
+        el('label', {}, 'Keterangan'), el('input', { id: 'b_ket', placeholder: 'Contoh: Cicilan 1 dari 2' }),
+        el('label', {}, 'Status'), sel('b_status', ['Lunas', 'Menunggu']),
+        btn));
+    }
+  }
+  if (!S.bayar.length) out.push(el('div', { class: 'empty' }, 'Belum ada pembayaran.'));
+  S.bayar.forEach(b => out.push(el('div', { class: 'card item' },
+    el('div', { class: 'row' }, el('b', {}, rp(b.jumlah)),
+      T ? statusSelect(['Lunas', 'Menunggu'], b.status, v => updateDoc(doc(db, 'pembayaran', b.id), { status: v })) : badgeFor(b.status)),
+    el('div', { class: 'muted' }, [fmtTgl(b.tanggal), T ? b.clientNama : null, b.metode].filter(Boolean).join(' · ')),
+    b.ket ? el('div', { class: 'muted' }, b.ket) : null,
+    T ? delBtn('pembayaran', b.id) : null)));
+  return out;
+}
+</script>
+</body>
+</html>
