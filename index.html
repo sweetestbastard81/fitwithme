@@ -12,15 +12,21 @@
   header { background:var(--brand); color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   header b { font-size:16px; } header small { display:block; opacity:.8; font-size:12px; }
   header button { background:transparent; border:1px solid #fff8; color:#fff; border-radius:6px; padding:4px 10px; }
+  #notifBar { display:none; }
+  .notifbanner { background:#fef7e0; color:var(--amber); padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; border-bottom:1px solid var(--line); }
   .tabs { display:flex; gap:6px; margin:12px 0; }
-  .tabs button { flex:1; padding:10px 2px; border:0; border-radius:8px; background:#e3e7ec; font-weight:600; font-size:13px; color:var(--text); }
+  .tabs button { flex:1; padding:10px 0; border:0; border-radius:8px; background:#e3e7ec; font-weight:600; font-size:12.5px; color:var(--text); }
   .tabs button.on { background:var(--brand); color:#fff; }
   .card { background:var(--card); border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 1px 2px #0001; }
+  .card.unread { border-left:4px solid var(--amber); }
   .card h3 { margin:0 0 4px; font-size:16px; }
   h4 { margin:16px 0 8px; font-size:14px; color:var(--muted); }
   .muted { color:var(--muted); font-size:13px; }
+  .warnline { color:var(--warn); font-size:13px; font-weight:600; }
   .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .jrow { border-top:1px solid var(--line); padding-top:6px; margin-top:6px; }
   .stat { background:var(--bg); border-radius:8px; padding:8px 10px; }
   .stat small { display:block; color:var(--muted); font-size:12px; }
   .stat b { font-size:16px; }
@@ -69,6 +75,7 @@
 
 <div id="appView" style="display:none">
   <header><div><b id="hdrName"></b><small id="hdrEmail"></small></div><button id="logoutBtn">Keluar</button></header>
+  <div id="notifBar"></div>
   <div class="wrap">
     <div class="tabs" id="tabs"></div>
     <div id="panel"></div>
@@ -79,7 +86,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, writeBatch }
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, writeBatch, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -91,12 +98,17 @@ const firebaseConfig = {
   appId: "1:540323289071:web:3ae8b1841d72b914a3c81a"
 };
 
-// ===== PENGATURAN TARIF (ubah di sini jika harga berubah) =====
+// ===== PENGATURAN (ubah di sini jika perlu) =====
 const TARIF_VISIT = 100000;   // coaching: per visit
 const TARIF_MEMBER = 220000;  // member: per periode
 const PERIODE_HARI = 30;      // lama satu periode (hari)
 const NAMA_USAHA = 'Fitwithme';
-// ==============================================================
+// Jadwal rutin default per minggu (hari: 0=Minggu, 1=Senin, ... 3=Rabu, 5=Jumat, 6=Sabtu)
+const RUTIN_DEFAULT = [
+  { hari: 3, mulai: '12:30', selesai: '13:30' },  // Rabu
+  { hari: 5, mulai: '11:30', selesai: '12:30' }   // Jumat
+];
+// ================================================
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -110,9 +122,35 @@ const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDa
 const diffDays = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 const waNumber = raw => { let n = String(raw || '').replace(/\D/g, ''); if (n.startsWith('0')) n = '62' + n.slice(1); else if (n.startsWith('8')) n = '62' + n; return n; };
 
-let S = { role: '', email: '', clients: [], jadwal: [], bayar: [], visit: [] };
+const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const HARI_OPTS = [['', 'Tidak dipakai'], ['1', 'Senin'], ['2', 'Selasa'], ['3', 'Rabu'], ['4', 'Kamis'], ['5', 'Jumat'], ['6', 'Sabtu'], ['0', 'Minggu']];
+const dayOf = iso => new Date(iso + 'T00:00:00Z').getUTCDay();
+const hariTgl = iso => iso ? HARI[dayOf(iso)] + ', ' + fmtTgl(iso) : '';
+const waktuText = iso => { try { return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return ''; } };
+
+const rutinOf = c => Array.isArray(c.rutin) ? c.rutin : RUTIN_DEFAULT;
+const rutinText = c => { const r = rutinOf(c); return r.length ? r.map(x => HARI[x.hari] + ' ' + x.mulai + '–' + x.selesai).join(', ') : 'belum diatur'; };
+
+// Hasilkan n jadwal berikutnya (mulai dari tanggal fromIso) sesuai jadwal rutin client
+function nextRutin(c, n, fromIso) {
+  const slots = rutinOf(c).filter(x => x && x.mulai && x.selesai);
+  const out = [];
+  if (!slots.length) return out;
+  let d = fromIso;
+  for (let i = 0; i < 400 && out.length < n; i++, d = addDays(d, 1)) {
+    slots.filter(x => Number(x.hari) === dayOf(d)).forEach(x => {
+      if (out.length < n) out.push({ tanggal: d, mulai: x.mulai, selesai: x.selesai });
+    });
+  }
+  return out;
+}
+
+let S = { role: '', email: '', clients: [], jadwal: [], bayar: [], visit: [], notif: [] };
 let TAB = 'ringkasan';
 let EDIT_ID = null;
+let RESCH_ID = null;
+let STALE = false;
+let unsubNotif = null;
 let registerMode = false;
 let busyAuth = false;
 
@@ -196,9 +234,24 @@ $('resetBtn').onclick = async () => {
 
 $('logoutBtn').onclick = () => signOut(auth);
 
+function stopNotifListener() { if (unsubNotif) { unsubNotif(); unsubNotif = null; } document.title = NAMA_USAHA; }
+
+// Pantau pemberitahuan secara langsung (hanya trainer)
+function startNotifListener() {
+  stopNotifListener();
+  let first = true;
+  unsubNotif = onSnapshot(collection(db, 'notif'), snap => {
+    S.notif = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.dibuat).localeCompare(String(a.dibuat)));
+    if (!first && snap.docChanges().some(c => c.type === 'added')) STALE = true;
+    first = false;
+    renderTabs(); renderBar();
+    if (TAB === 'notif') renderPanel();
+  }, err => console.error(err));
+}
+
 onAuthStateChanged(auth, async user => {
   if (busyAuth) return;
-  if (!user) { show('loginView'); return; }
+  if (!user) { stopNotifListener(); show('loginView'); return; }
   show('loadView');
   try {
     await user.reload();
@@ -211,7 +264,8 @@ onAuthStateChanged(auth, async user => {
     }
     await user.getIdToken(true);
     await loadData(user);
-    TAB = 'ringkasan'; EDIT_ID = null;
+    TAB = 'ringkasan'; EDIT_ID = null; RESCH_ID = null; STALE = false;
+    if (S.role === 'trainer') startNotifListener();
     render();
     show('appView');
   } catch (e) {
@@ -224,7 +278,7 @@ onAuthStateChanged(auth, async user => {
 // ---------- Data ----------
 async function loadData(user) {
   const email = user.email.toLowerCase();
-  S = { role: 'client', email, clients: [], jadwal: [], bayar: [], visit: [] };
+  S = { role: 'client', email, clients: [], jadwal: [], bayar: [], visit: [], notif: [] };
   const map = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
   let trainer = false;
   try {
@@ -238,6 +292,7 @@ async function loadData(user) {
     S.jadwal = map(await getDocs(collection(db, 'jadwal')));
     S.bayar = map(await getDocs(collection(db, 'pembayaran')));
     S.visit = map(await getDocs(collection(db, 'visit')));
+    S.notif = map(await getDocs(collection(db, 'notif')));
   } else {
     const q = (col, f) => getDocs(query(collection(db, col), where(f, '==', email)));
     S.clients = map(await q('clients', 'email'));
@@ -250,14 +305,16 @@ async function loadData(user) {
   S.bayar.forEach(b => { if (b.status !== 'Lunas') b.status = 'Belum Dibayar'; });
   S.bayar.sort((a, b) => String(b.tanggal).localeCompare(String(a.tanggal)));
   S.visit.sort((a, b) => String(b.tanggal).localeCompare(String(a.tanggal)));
+  S.notif.sort((a, b) => String(b.dibuat).localeCompare(String(a.dibuat)));
 }
 
+// Jalankan aksi, muat ulang data, tampilkan ulang. Mengembalikan true jika berhasil.
 async function act(fn) {
-  try { await fn(); await loadData(auth.currentUser); render(); }
-  catch (e) { alert(friendly(e)); try { await loadData(auth.currentUser); render(); } catch (_) {} }
+  try { await fn(); await loadData(auth.currentUser); render(); return true; }
+  catch (e) { alert(friendly(e)); try { await loadData(auth.currentUser); render(); } catch (_) {} return false; }
 }
 
-// Jalankan banyak operasi tulis (dipecah per 400 agar aman dari batas Firestore)
+// Banyak operasi tulis sekaligus (dipecah per 400 agar aman dari batas Firestore)
 async function runBatched(ops) {
   for (let i = 0; i < ops.length; i += 400) {
     const b = writeBatch(db);
@@ -304,25 +361,56 @@ function tagihanOps(c, mulai) {
 }
 
 function waLink(s) {
-  const msg = 'Halo kak ' + s.nama + ', semoga kabarnya baik! 👋\n\nSekedar mengingatkan kalo kakak masih punya ' + s.sisa +
+  const msg = 'Halo kak ' + s.nama + '! 👋\n\nSekedar mengingatkan kalo kakak masih punya ' + s.sisa +
     ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI + ' hari ini (sampai ' + fmtTgl(s.selesai) +
-    ').\n\nYuk segera jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya, terima kasih. 🙏💪';
+    ').\n\nYuk jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya! 💪';
   return 'https://wa.me/' + waNumber(s.wa) + '?text=' + encodeURIComponent(msg);
 }
 
+// Jadwal client lain yang bertabrakan waktunya
+function bentrok(tanggal, mulai, selesai, email, exceptId) {
+  return S.jadwal.filter(j => j.id !== exceptId && j.clientEmail !== email && j.status !== 'Batal'
+    && j.tanggal === tanggal && j.mulai < selesai && mulai < j.selesai);
+}
+
 // ---------- UI umum ----------
-function render() {
-  $('hdrName').textContent = S.role === 'trainer' ? 'Trainer' : (S.clients[0] ? 'Halo, ' + S.clients[0].nama : NAMA_USAHA);
-  $('hdrEmail').textContent = S.email;
+const isTrainer = () => S.role === 'trainer';
+const unreadCount = () => S.notif.filter(n => !n.dibaca).length;
+
+function goTab(t) {
+  TAB = t; RESCH_ID = null;
+  if (STALE && (t === 'notif' || t === 'jadwal')) { STALE = false; act(async () => {}); }
+  else render();
+}
+
+function renderTabs() {
   const tabs = [['ringkasan', 'Ringkasan'], ['jadwal', 'Jadwal'], ['visit', 'Visit'], ['bayar', 'Bayar']];
-  $('tabs').replaceChildren(...tabs.map(t => el('button', { class: TAB === t[0] ? 'on' : '', onclick: () => { TAB = t[0]; render(); } }, t[1])));
-  const v = { ringkasan: viewRingkasan, jadwal: viewJadwal, visit: viewVisit, bayar: viewBayar }[TAB];
+  if (isTrainer()) tabs.push(['notif', 'Notif' + (unreadCount() ? ' (' + unreadCount() + ')' : '')]);
+  $('tabs').replaceChildren(...tabs.map(t => el('button', { class: TAB === t[0] ? 'on' : '', onclick: () => goTab(t[0]) }, t[1])));
+}
+
+function renderBar() {
+  const bar = $('notifBar');
+  const n = isTrainer() ? unreadCount() : 0;
+  document.title = (n ? '(' + n + ') ' : '') + NAMA_USAHA;
+  if (!n || TAB === 'notif') { bar.style.display = 'none'; bar.replaceChildren(); return; }
+  bar.style.display = 'block';
+  bar.replaceChildren(el('div', { class: 'notifbanner', onclick: () => goTab('notif') }, '🔔 ' + n + ' perubahan jadwal baru dari client · ketuk untuk lihat'));
+}
+
+function renderPanel() {
+  const v = { ringkasan: viewRingkasan, jadwal: viewJadwal, visit: viewVisit, bayar: viewBayar, notif: viewNotif }[TAB];
   $('panel').replaceChildren(...v());
+}
+
+function render() {
+  $('hdrName').textContent = isTrainer() ? 'Trainer' : (S.clients[0] ? 'Halo, ' + S.clients[0].nama : NAMA_USAHA);
+  $('hdrEmail').textContent = S.email;
+  renderTabs(); renderBar(); renderPanel();
 }
 
 const stat = (l, v) => el('div', { class: 'stat' }, el('small', {}, l), el('b', {}, v));
 const val = id => $(id).value.trim();
-const isTrainer = () => S.role === 'trainer';
 
 function clientSelect(id, list) {
   return el('select', { id }, (list || S.clients).map(c => el('option', { value: c.email }, c.nama + ' (' + c.email + ')')));
@@ -363,6 +451,18 @@ function clientFields(p, c) {
     info.textContent = 'Biaya per periode: Coaching ' + rp(bc) + ' + Member ' + rp(bm) + ' = ' + rp(bc + bm);
   };
   coaching.onchange = upd; member.onchange = upd; upd();
+
+  const rutin = rutinOf(c);
+  const slots = [0, 1].map(i => {
+    const r = rutin[i] || {};
+    return el('div', { class: 'jrow' },
+      el('label', {}, 'Slot ' + (i + 1)),
+      select(p + '_h' + i, HARI_OPTS, r.hari != null ? String(r.hari) : ''),
+      el('div', { class: 'two' },
+        el('input', { id: p + '_rm' + i, type: 'time', value: r.mulai || '' }),
+        el('input', { id: p + '_rs' + i, type: 'time', value: r.selesai || '' })));
+  });
+
   return [
     el('label', {}, 'Nama'), el('input', { id: p + '_nama', value: c.nama || '' }),
     el('label', {}, 'Email (harus sama dengan email yang dipakai client untuk daftar)'), el('input', { id: p + '_email', type: 'email', value: c.email || '' }),
@@ -370,7 +470,9 @@ function clientFields(p, c) {
     el('label', {}, 'Paket coaching'), coaching,
     el('label', {}, 'Member'), member,
     info,
-    el('label', {}, 'Tanggal mulai periode (berlaku ' + PERIODE_HARI + ' hari)'), el('input', { id: p + '_mulai', type: 'date', value: c.periodeMulai || c.tanggalMulai || today() })
+    el('label', {}, 'Tanggal mulai periode (berlaku ' + PERIODE_HARI + ' hari)'), el('input', { id: p + '_mulai', type: 'date', value: c.periodeMulai || c.tanggalMulai || today() }),
+    el('h4', {}, 'Jadwal rutin mingguan (jam mulai & selesai)'),
+    ...slots
   ];
 }
 
@@ -378,10 +480,16 @@ function readClient(p) {
   const d = {
     nama: val(p + '_nama'), email: val(p + '_email').toLowerCase(), wa: val(p + '_wa'),
     coaching: Number($(p + '_coaching').value), member: $(p + '_member').value === 'ya',
-    periodeMulai: val(p + '_mulai')
+    periodeMulai: val(p + '_mulai'), rutin: []
   };
   if (!d.nama || !d.email) return { err: 'Nama dan email wajib diisi.' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.periodeMulai)) return { err: 'Tanggal mulai periode wajib diisi.' };
+  for (const i of [0, 1]) {
+    const h = $(p + '_h' + i).value, m = val(p + '_rm' + i), s = val(p + '_rs' + i);
+    if (h === '') continue;
+    if (!m || !s || s <= m) return { err: 'Jadwal rutin slot ' + (i + 1) + ': jam mulai dan selesai harus diisi dengan benar.' };
+    d.rutin.push({ hari: Number(h), mulai: m, selesai: s });
+  }
   return { d };
 }
 
@@ -419,7 +527,7 @@ function editCard(c) {
       // Jika nama/email berubah, perbarui data milik client ini
       if (d.nama !== c.nama || d.email !== c.email) {
         const patch = { clientEmail: d.email, clientNama: d.nama };
-        [['jadwal', S.jadwal], ['pembayaran', S.bayar], ['visit', S.visit]].forEach(([col, list]) =>
+        [['jadwal', S.jadwal], ['pembayaran', S.bayar], ['visit', S.visit], ['notif', S.notif]].forEach(([col, list]) =>
           list.filter(x => x.clientEmail === c.email).forEach(x => ops.push(b => b.update(doc(db, col, x.id), patch))));
       }
       await runBatched(ops);
@@ -446,13 +554,12 @@ function perpanjang(s) {
 }
 
 function deleteClient(c) {
-  const js = S.jadwal.filter(j => j.clientEmail === c.email);
-  const bs = S.bayar.filter(x => x.clientEmail === c.email);
-  const vs = S.visit.filter(x => x.clientEmail === c.email);
+  const rel = col => S[col].filter(x => x.clientEmail === c.email);
+  const js = rel('jadwal'), bs = rel('bayar'), vs = rel('visit'), ns = rel('notif');
   if (!confirm('Hapus client ' + c.nama + '?\n\nIkut terhapus: ' + js.length + ' jadwal, ' + vs.length + ' visit, dan ' + bs.length + ' pembayaran.\nTindakan ini tidak bisa dibatalkan.')) return;
   act(async () => {
     const ops = [b => b.delete(doc(db, 'clients', c.id))];
-    [['jadwal', js], ['pembayaran', bs], ['visit', vs]].forEach(([col, list]) =>
+    [['jadwal', js], ['pembayaran', bs], ['visit', vs], ['notif', ns]].forEach(([col, list]) =>
       list.forEach(x => ops.push(b => b.delete(doc(db, col, x.id)))));
     await runBatched(ops);
   });
@@ -467,7 +574,8 @@ function clientCard(s) {
   const kids = [
     el('div', { class: 'row' }, el('h3', {}, s.nama), badge),
     el('div', { class: 'muted' }, [paketLabel(s), T ? s.email : null].filter(Boolean).join(' · ')),
-    el('div', { class: 'muted' }, 'Periode: ' + periode)
+    el('div', { class: 'muted' }, 'Periode: ' + periode),
+    el('div', { class: 'muted' }, 'Jadwal rutin: ' + rutinText(s))
   ];
   const stats = [];
   if (s.kuota > 0) {
@@ -509,36 +617,134 @@ function viewRingkasan() {
 }
 
 // ---------- Tab Jadwal ----------
+function addJadwalCard() {
+  const MAX_TGL = 8;
+  const cs = clientSelect('j_email');
+  const jmlSel = select('j_jml', Array.from({ length: MAX_TGL }, (_, i) => [String(i + 1), (i + 1) + ' tanggal']), '1');
+  const info = el('div', { class: 'muted', style: 'margin-bottom:6px' });
+  const rowsBox = el('div');
+  const clientObj = () => S.clients.find(x => x.email === cs.value) || {};
+  const fallback = { tanggal: '', mulai: '07:00', selesai: '08:00' };
+
+  const rowEl = (i, r) => el('div', { class: 'jrow' },
+    el('label', {}, 'Tanggal ke-' + (i + 1)),
+    el('input', { type: 'date', value: r.tanggal || '' }),
+    el('div', { class: 'two' },
+      el('div', {}, el('label', {}, 'Jam mulai'), el('input', { type: 'time', value: r.mulai || '' })),
+      el('div', {}, el('label', {}, 'Jam selesai'), el('input', { type: 'time', value: r.selesai || '' }))));
+  const readRows = () => [...rowsBox.querySelectorAll('.jrow')].map(row => {
+    const [a, b, c] = row.querySelectorAll('input');
+    return { tanggal: a.value, mulai: b.value, selesai: c.value };
+  });
+  const draw = rows => rowsBox.replaceChildren(...rows.map((r, i) => rowEl(i, r)));
+
+  // Isi ulang semua baris dari jadwal rutin client (mulai hari ini)
+  const regen = () => {
+    const n = Number(jmlSel.value);
+    info.textContent = 'Jadwal rutin ' + (clientObj().nama || 'client') + ': ' + rutinText(clientObj());
+    const g = nextRutin(clientObj(), n, today());
+    draw(Array.from({ length: n }, (_, i) => g[i] || { ...fallback, tanggal: i === 0 ? today() : '' }));
+  };
+  // Ubah jumlah baris: pertahankan isian lama, tambahan baris mengikuti jadwal rutin
+  jmlSel.onchange = () => {
+    const n = Number(jmlSel.value);
+    const rows = readRows().slice(0, n);
+    const need = n - rows.length;
+    if (need > 0) {
+      const last = rows.length && rows[rows.length - 1].tanggal ? addDays(rows[rows.length - 1].tanggal, 1) : today();
+      const g = nextRutin(clientObj(), need, last);
+      for (let k = 0; k < need; k++) rows.push(g[k] || { ...fallback });
+    }
+    draw(rows);
+  };
+  cs.onchange = regen;
+  regen();
+
+  const btn = el('button', { class: 'primary' }, 'Simpan jadwal');
+  btn.onclick = () => {
+    const rows = readRows();
+    if (rows.some(r => !r.tanggal || !r.mulai || !r.selesai)) return alert('Tanggal dan jam setiap baris wajib diisi.');
+    if (rows.some(r => r.selesai <= r.mulai)) return alert('Jam selesai harus lebih besar dari jam mulai.');
+    const keys = rows.map(r => r.tanggal + r.mulai);
+    if (new Set(keys).size !== keys.length) return alert('Ada jadwal kembar (tanggal dan jam sama).');
+    const email = cs.value;
+    const dobel = rows.filter(r => S.jadwal.some(j => j.clientEmail === email && j.tanggal === r.tanggal && j.status !== 'Batal'));
+    if (dobel.length && !confirm('Client ini sudah punya jadwal pada: ' + dobel.map(r => fmtTgl(r.tanggal)).join(', ') + '.\nTetap tambahkan?')) return;
+    const bt = rows.flatMap(r => bentrok(r.tanggal, r.mulai, r.selesai, email).map(j => j.clientNama + ' (' + fmtTgl(j.tanggal) + ' ' + j.mulai + '-' + j.selesai + ')'));
+    if (bt.length && !confirm('Bentrok dengan jadwal client lain:\n' + bt.join('\n') + '\n\nTetap tambahkan?')) return;
+    const base = {
+      clientEmail: email, clientNama: namaOf(email),
+      jenis: val('j_jenis'), lokasi: val('j_lokasi'), catatan: val('j_catatan'), status: 'Terjadwal'
+    };
+    btn.disabled = true;
+    const sorted = [...rows].sort((a, b) => (a.tanggal + a.mulai).localeCompare(b.tanggal + b.mulai));
+    act(() => runBatched(sorted.map(r => b => b.set(doc(collection(db, 'jadwal')), { ...base, ...r }))));
+  };
+
+  return el('details', { class: 'card' }, el('summary', {}, '+ Tambah jadwal'),
+    el('label', {}, 'Client'), cs,
+    info,
+    el('label', {}, 'Berapa tanggal sekaligus? (1-8)'), jmlSel,
+    el('div', { class: 'muted' }, 'Tanggal & jam terisi otomatis sesuai jadwal rutin, tetap bisa diubah.'),
+    rowsBox,
+    el('button', { class: 'link', onclick: regen }, 'Isi ulang dari jadwal rutin'),
+    el('label', {}, 'Jenis latihan'), el('input', { id: 'j_jenis', placeholder: 'Contoh: Strength - Upper Body' }),
+    el('label', {}, 'Lokasi'), el('input', { id: 'j_lokasi' }),
+    el('label', {}, 'Catatan'), el('input', { id: 'j_catatan' }),
+    btn);
+}
+
+function reschedCard(j) {
+  const d = el('input', { type: 'date', min: today(), value: j.tanggal });
+  const m = el('input', { type: 'time', value: j.mulai });
+  const s = el('input', { type: 'time', value: j.selesai });
+  const save = el('button', { class: 'primary' }, 'Simpan jadwal baru');
+  save.onclick = async () => {
+    if (!d.value || !m.value || !s.value) return alert('Tanggal dan jam wajib diisi.');
+    if (d.value < today()) return alert('Tanggal tidak boleh di masa lalu.');
+    if (s.value <= m.value) return alert('Jam selesai harus lebih besar dari jam mulai.');
+    if (d.value === j.tanggal && m.value === j.mulai && s.value === j.selesai) return alert('Jadwal belum diubah.');
+    save.disabled = true;
+    const nama = (S.clients[0] && S.clients[0].nama) || j.clientNama;
+    const ok = await act(async () => {
+      await runBatched([
+        b => b.update(doc(db, 'jadwal', j.id), {
+          tanggal: d.value, mulai: m.value, selesai: s.value,
+          diubahClient: true, tanggalAsal: j.tanggal, mulaiAsal: j.mulai, selesaiAsal: j.selesai
+        }),
+        b => b.set(doc(collection(db, 'notif')), {
+          tipe: 'reschedule', clientEmail: j.clientEmail, clientNama: nama, jadwalId: j.id,
+          dari: { tanggal: j.tanggal, mulai: j.mulai, selesai: j.selesai },
+          ke: { tanggal: d.value, mulai: m.value, selesai: s.value },
+          dibuat: new Date().toISOString(), dibaca: false
+        })
+      ]);
+      RESCH_ID = null;
+    });
+    if (ok) alert('Jadwal berhasil diubah. Trainer sudah mendapat pemberitahuan.');
+  };
+  return el('div', { class: 'card item' },
+    el('b', {}, 'Ubah jadwal'),
+    el('div', { class: 'muted', style: 'margin-bottom:6px' }, 'Sekarang: ' + hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
+    el('label', {}, 'Tanggal baru'), d,
+    el('div', { class: 'two' },
+      el('div', {}, el('label', {}, 'Jam mulai'), m),
+      el('div', {}, el('label', {}, 'Jam selesai'), s)),
+    el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Trainer akan mendapat pemberitahuan tentang perubahan ini.'),
+    save,
+    el('button', { class: 'link', onclick: () => { RESCH_ID = null; render(); } }, 'Batal'));
+}
+
 function viewJadwal() {
   const out = [];
   const T = isTrainer();
   if (T) {
     if (!S.clients.length) out.push(el('div', { class: 'empty' }, 'Tambahkan client dulu di tab Ringkasan.'));
-    else {
-      const btn = el('button', { class: 'primary' }, 'Tambah jadwal');
-      btn.onclick = () => {
-        const tanggal = val('j_tgl'), mulai = val('j_mulai'), selesai = val('j_selesai');
-        if (!tanggal || !mulai || !selesai) return alert('Tanggal dan jam wajib diisi.');
-        const email = $('j_email').value;
-        btn.disabled = true;
-        act(() => addDoc(collection(db, 'jadwal'), {
-          clientEmail: email, clientNama: namaOf(email), tanggal, mulai, selesai,
-          jenis: val('j_jenis'), lokasi: val('j_lokasi'), catatan: val('j_catatan'), status: 'Terjadwal'
-        }));
-      };
-      out.push(el('details', { class: 'card' }, el('summary', {}, '+ Tambah jadwal'),
-        el('label', {}, 'Client'), clientSelect('j_email'),
-        el('label', {}, 'Tanggal'), el('input', { id: 'j_tgl', type: 'date', value: today() }),
-        el('label', {}, 'Jam mulai'), el('input', { id: 'j_mulai', type: 'time', value: '07:00' }),
-        el('label', {}, 'Jam selesai'), el('input', { id: 'j_selesai', type: 'time', value: '08:00' }),
-        el('label', {}, 'Jenis latihan'), el('input', { id: 'j_jenis', placeholder: 'Contoh: Strength - Upper Body' }),
-        el('label', {}, 'Lokasi'), el('input', { id: 'j_lokasi' }),
-        el('label', {}, 'Catatan'), el('input', { id: 'j_catatan' }),
-        btn));
-    }
+    else out.push(addJadwalCard());
   }
   if (!S.jadwal.length) out.push(el('div', { class: 'empty' }, 'Belum ada jadwal.'));
   S.jadwal.forEach(j => {
+    if (!T && RESCH_ID === j.id) { out.push(reschedCard(j)); return; }
     const onStatus = async v => {
       await updateDoc(doc(db, 'jadwal', j.id), { status: v });
       const c = S.clients.find(x => x.email === j.clientEmail);
@@ -547,13 +753,40 @@ function viewJadwal() {
         await addDoc(collection(db, 'visit'), { clientEmail: j.clientEmail, clientNama: j.clientNama, tanggal: j.tanggal, catatan: j.jenis || '', jadwalId: j.id });
       }
     };
+    const canResched = !T && j.status === 'Terjadwal' && j.tanggal >= today();
     out.push(el('div', { class: 'card item' },
-      el('div', { class: 'row' }, el('b', {}, fmtTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
+      el('div', { class: 'row' }, el('b', {}, hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
         T ? statusSelect(['Terjadwal', 'Selesai', 'Batal'], j.status, onStatus) : badgeFor(j.status)),
-      el('div', {}, j.jenis),
+      j.jenis ? el('div', {}, j.jenis) : null,
       el('div', { class: 'muted' }, [T ? j.clientNama : null, j.lokasi].filter(Boolean).join(' · ')),
       j.catatan ? el('div', { class: 'muted' }, 'Catatan: ' + j.catatan) : null,
+      j.diubahClient ? el('div', { class: 'muted' }, '↻ Diubah client, sebelumnya ' + hariTgl(j.tanggalAsal) + ' · ' + j.mulaiAsal + '-' + j.selesaiAsal) : null,
+      canResched ? el('button', { class: 'link', onclick: () => { RESCH_ID = j.id; render(); } }, 'Ubah jadwal') : null,
       T ? delBtn('jadwal', j.id) : null));
+  });
+  return out;
+}
+
+// ---------- Tab Notif (trainer) ----------
+function viewNotif() {
+  const out = [];
+  const unread = S.notif.filter(n => !n.dibaca);
+  out.push(el('div', { class: 'row' },
+    el('h4', {}, 'Perubahan jadwal dari client (' + unread.length + ' belum dibaca)'),
+    unread.length ? el('button', { class: 'link', onclick: () => act(() => runBatched(unread.map(n => b => b.update(doc(db, 'notif', n.id), { dibaca: true })))) }, 'Tandai semua dibaca') : null));
+  if (!S.notif.length) out.push(el('div', { class: 'empty' }, 'Belum ada pemberitahuan.'));
+  S.notif.forEach(n => {
+    const dari = n.dari || {}, ke = n.ke || {};
+    const bt = bentrok(ke.tanggal, ke.mulai, ke.selesai, n.clientEmail, n.jadwalId);
+    out.push(el('div', { class: 'card item' + (n.dibaca ? '' : ' unread') },
+      el('div', { class: 'row' }, el('b', {}, n.clientNama + ' mengubah jadwal'), n.dibaca ? null : el('span', { class: 'badge amber' }, 'Baru')),
+      el('div', { class: 'muted' }, 'Dari: ' + hariTgl(dari.tanggal) + ' · ' + dari.mulai + '-' + dari.selesai),
+      el('div', {}, 'Ke: ' + hariTgl(ke.tanggal) + ' · ' + ke.mulai + '-' + ke.selesai),
+      bt.length ? el('div', { class: 'warnline' }, '⚠ Bentrok dengan: ' + bt.map(j => j.clientNama + ' (' + j.mulai + '-' + j.selesai + ')').join(', ')) : null,
+      el('div', { class: 'muted' }, 'Dikirim ' + waktuText(n.dibuat)),
+      el('div', { class: 'actions' },
+        n.dibaca ? null : el('button', { class: 'link', onclick: () => act(() => updateDoc(doc(db, 'notif', n.id), { dibaca: true })) }, 'Tandai dibaca'),
+        el('button', { class: 'del', onclick: () => act(() => deleteDoc(doc(db, 'notif', n.id))) }, 'Hapus'))));
   });
   return out;
 }
