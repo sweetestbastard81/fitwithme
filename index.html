@@ -304,7 +304,7 @@ function tagihanOps(c, mulai) {
 }
 
 function waLink(s) {
-  const msg = 'Halo kak' + s.nama + ', semoga kabarnya baik! 👋\n\nSekedar mengingatkan kalo kakak masih punya ' + s.sisa +
+  const msg = 'Halo kak ' + s.nama + ', semoga kabarnya baik! 👋\n\nSekedar mengingatkan kalo kakak masih punya ' + s.sisa +
     ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI + ' hari ini (sampai ' + fmtTgl(s.selesai) +
     ').\n\nYuk segera jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya, terima kasih. 🙏💪';
   return 'https://wa.me/' + waNumber(s.wa) + '?text=' + encodeURIComponent(msg);
