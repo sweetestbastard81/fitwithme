@@ -75,7 +75,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where }
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -98,6 +98,7 @@ const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getT
 
 let S = { role: '', email: '', clients: [], jadwal: [], bayar: [] };
 let TAB = 'ringkasan';
+let EDIT_ID = null;
 let registerMode = false;
 let busyAuth = false;   // true saat proses daftar, agar listener login tidak ikut campur
 
@@ -196,7 +197,7 @@ onAuthStateChanged(auth, async user => {
     }
     await user.getIdToken(true);
     await loadData(user);
-    TAB = 'ringkasan';
+    TAB = 'ringkasan'; EDIT_ID = null;
     render();
     show('appView');
   } catch (e) {
@@ -236,6 +237,15 @@ async function act(fn) {
   catch (e) { alert(friendly(e)); try { await loadData(auth.currentUser); render(); } catch (_) {} }
 }
 
+// Jalankan banyak operasi tulis sekaligus (dipecah per 400 agar aman dari batas Firestore)
+async function runBatched(ops) {
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = writeBatch(db);
+    ops.slice(i, i + 400).forEach(f => f(b));
+    await b.commit();
+  }
+}
+
 function summaryOf(c) {
   const used = S.jadwal.filter(j => j.clientEmail === c.email && j.status === 'Selesai').length;
   const paid = S.bayar.filter(b => b.clientEmail === c.email && b.status === 'Lunas').reduce((s, b) => s + Number(b.jumlah || 0), 0);
@@ -262,6 +272,7 @@ function viewRingkasan() {
     btn.onclick = () => {
       const email = val('c_email').toLowerCase(), nama = val('c_nama');
       if (!nama || !email) return alert('Nama dan email wajib diisi.');
+      if (S.clients.some(x => x.email === email)) return alert('Email ini sudah terdaftar sebagai client lain.');
       btn.disabled = true;
       act(() => addDoc(collection(db, 'clients'), {
         nama, email, wa: val('c_wa'), paket: val('c_paket'),
@@ -285,6 +296,7 @@ function viewRingkasan() {
     return out;
   }
   S.clients.map(summaryOf).forEach(s => {
+    if (S.role === 'trainer' && EDIT_ID === s.id) { out.push(editForm(s)); return; }
     const pct = s.total > 0 ? Math.min(100, Math.round(s.used / s.total * 100)) : 0;
     const lunas = s.tagihan <= 0;
     out.push(el('div', { class: 'card' },
@@ -294,9 +306,59 @@ function viewRingkasan() {
       el('div', { class: 'muted', style: 'margin-top:4px' }, s.used + ' dari ' + s.total + ' sesi selesai'),
       el('div', { class: 'grid' },
         stat('Sisa sesi', s.sisaSesi), stat('Sisa tagihan', rp(Math.max(0, s.tagihan))),
-        stat('Total paket', rp(s.harga)), stat('Sudah dibayar', rp(s.paid)))));
+        stat('Total paket', rp(s.harga)), stat('Sudah dibayar', rp(s.paid))),
+      S.role === 'trainer' ? el('div', { class: 'row', style: 'margin-top:10px' },
+        el('button', { class: 'link', onclick: () => { EDIT_ID = s.id; render(); } }, 'Edit client'),
+        el('button', { class: 'del', onclick: () => deleteClient(s) }, 'Hapus client')) : null));
   });
   return out;
+}
+
+function editForm(c) {
+  const save = el('button', { class: 'primary' }, 'Simpan perubahan');
+  save.onclick = () => {
+    const nama = val('e_nama'), email = val('e_email').toLowerCase();
+    if (!nama || !email) return alert('Nama dan email wajib diisi.');
+    if (S.clients.some(x => x.id !== c.id && x.email === email)) return alert('Email sudah dipakai client lain.');
+    save.disabled = true;
+    act(async () => {
+      const ops = [b => b.update(doc(db, 'clients', c.id), {
+        nama, email, wa: val('e_wa'), paket: val('e_paket'),
+        totalSesi: Number(val('e_total') || 0), harga: Number(val('e_harga') || 0), tanggalMulai: val('e_mulai')
+      })];
+      // Jika nama/email berubah, perbarui juga jadwal & pembayaran milik client ini
+      if (nama !== c.nama || email !== c.email) {
+        S.jadwal.filter(j => j.clientEmail === c.email).forEach(j =>
+          ops.push(b => b.update(doc(db, 'jadwal', j.id), { clientEmail: email, clientNama: nama })));
+        S.bayar.filter(x => x.clientEmail === c.email).forEach(x =>
+          ops.push(b => b.update(doc(db, 'pembayaran', x.id), { clientEmail: email, clientNama: nama })));
+      }
+      await runBatched(ops);
+      EDIT_ID = null;
+    });
+  };
+  return el('div', { class: 'card' }, el('h3', {}, 'Edit client'),
+    el('label', {}, 'Nama'), el('input', { id: 'e_nama', value: c.nama || '' }),
+    el('label', {}, 'Email'), el('input', { id: 'e_email', type: 'email', value: c.email || '' }),
+    el('label', {}, 'No WhatsApp'), el('input', { id: 'e_wa', inputmode: 'tel', value: c.wa || '' }),
+    el('label', {}, 'Nama paket'), el('input', { id: 'e_paket', value: c.paket || '' }),
+    el('label', {}, 'Total sesi'), el('input', { id: 'e_total', type: 'number', inputmode: 'numeric', value: c.totalSesi || 0 }),
+    el('label', {}, 'Harga paket (Rp)'), el('input', { id: 'e_harga', type: 'number', inputmode: 'numeric', value: c.harga || 0 }),
+    el('label', {}, 'Tanggal mulai'), el('input', { id: 'e_mulai', type: 'date', value: c.tanggalMulai || '' }),
+    save,
+    el('button', { class: 'link', onclick: () => { EDIT_ID = null; render(); } }, 'Batal'));
+}
+
+function deleteClient(c) {
+  const js = S.jadwal.filter(j => j.clientEmail === c.email);
+  const bs = S.bayar.filter(x => x.clientEmail === c.email);
+  if (!confirm('Hapus client ' + c.nama + '?\n\nIkut terhapus: ' + js.length + ' jadwal dan ' + bs.length + ' pembayaran.\nTindakan ini tidak bisa dibatalkan.')) return;
+  act(async () => {
+    const ops = [b => b.delete(doc(db, 'clients', c.id))];
+    js.forEach(j => ops.push(b => b.delete(doc(db, 'jadwal', j.id))));
+    bs.forEach(x => ops.push(b => b.delete(doc(db, 'pembayaran', x.id))));
+    await runBatched(ops);
+  });
 }
 
 function clientSelect(id) {
