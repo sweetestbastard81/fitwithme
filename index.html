@@ -126,6 +126,8 @@ const TARIF_VISIT = 100000;   // coaching: per visit
 const TARIF_MEMBER = 220000;  // member: per periode
 const PERIODE_HARI = 30;      // lama satu periode (hari)
 const NAMA_USAHA = 'Fitwithme';
+// Rekening untuk pembayaran (tampil di pesan invoice)
+const BANK = { nama: 'BCA', nomor: '6330518560', an: 'Adibawana W' };
 // Jadwal rutin default per minggu (hari: 0=Minggu, 1=Senin, ... 3=Rabu, 5=Jumat, 6=Sabtu)
 const RUTIN_DEFAULT = [
   { hari: 3, mulai: '12:30', selesai: '13:30' },  // Rabu
@@ -383,10 +385,31 @@ function tagihanOps(c, mulai) {
   return ops;
 }
 
+// Tagihan yang belum dibayar milik satu client
+const unpaidOf = email => S.bayar.filter(b => b.clientEmail === email && b.status !== 'Lunas')
+  .sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
+
+// Link WhatsApp berisi pesan invoice (semua tagihan yang belum dibayar)
+function invoiceLink(c) {
+  const items = unpaidOf(c.email);
+  if (!items.length) return '#';
+  const total = items.reduce((s, b) => s + Number(b.jumlah || 0), 0);
+  const rincian = items.map(x => (x.ket || x.jenis || 'Tagihan') + ': ' + rp(x.jumlah)).join('\n');
+  const msg = 'Halo kak ' + c.nama + '! 👋\n\n' +
+    'Semoga latihan bulan ini lancar terus ya. Biar jadwal sesi latihan kakak tetap aman dan tercatat rapi di sistem, berikut invoice latihan untuk sesi kak ' + c.nama + ' 🧾\n\n' +
+    'Rincian :\n' + rincian + '\n' +
+    'Total yang perlu dibayar : ' + rp(total) + '\n\n' +
+    'Bisa transfer ke:\n🏦 ' + BANK.nama + ' ' + BANK.nomor + '\na.n. ' + BANK.an + '\n' +
+    'Kalau sudah transfer, kirim bukti bayarnya ke chat ini ya 🙏\n\n' +
+    'Terima kasih, semangat latihannya! 💪';
+  return 'https://wa.me/' + waNumber(c.wa) + '?text=' + encodeURIComponent(msg);
+}
+
 function waLink(s) {
-  const msg = 'Halo, kak ' + s.nama + '! 👋\n\nSekedar mengingatkan bahwa kakak masih punya ' + s.sisa +
-    ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI + ' hari ini (sampai ' + fmtTgl(s.selesai) +
-    ').\n\nYuk segera jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya! 💪';
+  const msg = 'Halo kak ' + s.nama + '! 👋\n\n' +
+    'Sekedar mengingatkan bahwa kakak masih punya ' + s.sisa + ' jatah visit coaching yang bisa dipakai di periode ' + PERIODE_HARI +
+    ' hari ini (sampai ' + fmtTgl(s.selesai) + ')\n\n' +
+    'Yuk segera jadwalkan sesi latihan sebelum kuota hangus ya. Ditunggu konfirmasinya! 💪';
   return 'https://wa.me/' + waNumber(s.wa) + '?text=' + encodeURIComponent(msg);
 }
 
@@ -640,6 +663,8 @@ function clientCard(s) {
       el('button', { class: 'link', onclick: () => { EDIT_ID = s.id; render(); } }, 'Edit'),
       el('button', { class: 'link', onclick: () => perpanjang(s) }, 'Perpanjang periode')
     ];
+    if (s.belum > 0 && waNumber(s.wa))
+      acts.push(el('a', { class: 'wa', href: invoiceLink(s), target: '_blank', rel: 'noopener' }, 'Kirim invoice'));
     if (s.kuota > 0 && s.sisa > 0 && s.hariSisa > 0 && waNumber(s.wa))
       acts.push(el('a', { class: 'wa', href: waLink(s), target: '_blank', rel: 'noopener' }, 'Kirim pengingat WA'));
     acts.push(el('button', { class: 'del', onclick: () => deleteClient(s) }, 'Hapus'));
@@ -998,6 +1023,17 @@ function viewBayar() {
 
   out.push(el('div', { class: 'card' }, el('h3', {}, T ? 'Ringkasan pembayaran (semua client)' : 'Ringkasan pembayaran'),
     el('div', { class: 'grid' }, stat('Belum dibayar', rp(sum(belum))), stat('Sudah dibayar', rp(sum(lunas))))));
+
+  const due = S.clients.map(c => ({ c, items: unpaidOf(c.email) })).filter(x => x.items.length);
+  if (T && due.length) {
+    out.push(el('div', { class: 'card' }, el('h3', {}, 'Kirim invoice'),
+      el('div', { class: 'muted' }, 'Ketuk Kirim WA untuk membuka WhatsApp dengan pesan invoice yang siap dikirim.'),
+      due.map(({ c, items }) => el('div', { class: 'jclient' },
+        el('div', { class: 'row' },
+          el('div', {}, el('span', { class: 'name' }, c.nama), el('div', { class: 'muted' }, items.length + ' tagihan · ' + rp(sum(items)))),
+          waNumber(c.wa) ? el('a', { class: 'wa', href: invoiceLink(c), target: '_blank', rel: 'noopener' }, 'Kirim WA')
+                         : el('span', { class: 'muted' }, 'No WA kosong'))))));
+  }
 
   out.push(el('h4', {}, 'Belum dibayar (' + belum.length + ')'));
   if (!belum.length) out.push(el('div', { class: 'empty' }, 'Tidak ada tagihan yang belum dibayar.'));
