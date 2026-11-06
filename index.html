@@ -71,6 +71,28 @@
   .logo { width:56px; height:56px; border-radius:18px; background:var(--grad); display:grid; place-items:center; margin-bottom:12px; box-shadow:0 14px 28px -12px rgba(99,102,241,.6); }
   .brand { font-size:28px; font-weight:800; letter-spacing:-.02em; margin:0 0 4px; background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
   #loginView .card { background:var(--glass); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); padding:24px 20px; }
+  body { font-size:16px; }
+  .muted { font-size:14px; color:#565e80; }
+  label { font-size:14px; color:#4a5275; }
+  .stat small { font-size:13px; } .stat b { font-size:18px; }
+  .badge { font-size:13px; }
+  header button { font-size:14px; font-family:inherit; }
+  button.primary { font-size:17px; font-weight:700; font-family:inherit; }
+  button.link { font-size:15px; font-weight:700; font-family:inherit; }
+  button.del { font-size:14px; font-weight:600; font-family:inherit; }
+  .tabs button { font-size:12px; font-weight:700; font-family:inherit; line-height:1.2; position:relative; min-height:62px; }
+  .tabs button svg { width:26px; height:26px; } .tabs button.on svg { stroke-width:2.3; }
+  .dot { position:absolute; top:3px; left:calc(50% + 6px); min-width:19px; height:19px; padding:0 5px; border-radius:10px; background:#e0364f; color:#fff;
+    font-size:11px; font-weight:800; font-style:normal; line-height:19px; text-align:center; box-shadow:0 0 0 2px #fff; }
+  .hero { background:var(--grad); color:#fff; border-radius:24px; padding:18px; margin-bottom:14px; box-shadow:0 16px 32px -16px rgba(99,102,241,.7); }
+  .hero h3 { color:#fff; margin:0 0 6px; font-size:19px; font-weight:800; }
+  .hero .muted { color:rgba(255,255,255,.9); font-size:15px; }
+  .hero button.light { background:#fff; color:var(--accent); border:0; border-radius:14px; min-height:48px; padding:0 20px; font-weight:700; font-size:15px; font-family:inherit; margin-top:12px; }
+  .chips { display:flex; gap:8px; overflow-x:auto; padding:4px 0 10px; -webkit-overflow-scrolling:touch; }
+  .chips button { flex:none; min-height:46px; padding:0 14px; border-radius:14px; border:1.5px solid var(--line); background:#fff; font-family:inherit; font-size:14px; font-weight:700; color:var(--text); }
+  .chips button:active { border-color:var(--g2); background:#f1edff; color:var(--accent); }
+  .note { background:#effbf8; border:1px solid #c9f0e9; color:#0b7a6b; border-radius:14px; padding:10px 12px; font-size:14px; font-weight:600; margin:8px 0; }
+  .preview { font-weight:800; margin:6px 0 10px; color:var(--accent); }
 </style>
 </head>
 <body>
@@ -447,10 +469,10 @@ function goTab(t) {
 
 function renderTabs() {
   const tabs = [['ringkasan', 'Ringkasan'], ['jadwal', 'Jadwal'], ['visit', 'Visit'], ['bayar', 'Bayar']];
-  if (isTrainer()) tabs.push(['notif', 'Notif' + (unreadCount() ? ' (' + unreadCount() + ')' : '')]);
+  if (isTrainer()) tabs.push(['notif', 'Notif']);
   $('tabs').replaceChildren(...tabs.map(t => {
     const btn = el('button', { class: TAB === t[0] ? 'on' : '', onclick: () => goTab(t[0]) });
-    btn.innerHTML = svgIcon(t[0]) + '<span>' + t[1] + '</span>';
+    btn.innerHTML = svgIcon(t[0]) + '<span>' + t[1] + '</span>' + (t[0] === 'notif' && unreadCount() ? '<i class="dot">' + unreadCount() + '</i>' : '');
     return btn;
   }));
 }
@@ -673,8 +695,27 @@ function clientCard(s) {
   return el('div', { class: 'card' }, kids);
 }
 
+function heroCard() {
+  const hari = today();
+  const aktif = S.jadwal.filter(j => j.status === 'Terjadwal' && j.tanggal >= hari);
+  const nx = aktif[0];
+  if (isTrainer()) {
+    const hi = aktif.filter(j => j.tanggal === hari);
+    if (hi.length) return el('div', { class: 'hero' }, el('h3', {}, 'Sesi hari ini (' + hi.length + ')'),
+      hi.map(j => el('div', { class: 'muted' }, j.mulai + '-' + j.selesai + ' · ' + j.clientNama)),
+      el('button', { class: 'light', onclick: () => goTab('jadwal') }, 'Buka jadwal'));
+    return el('div', { class: 'hero' }, el('h3', {}, 'Tidak ada sesi hari ini'),
+      el('div', { class: 'muted' }, nx ? 'Berikutnya: ' + hariTgl(nx.tanggal) + ' · ' + nx.mulai + ' · ' + nx.clientNama : 'Belum ada sesi terjadwal.'),
+      el('button', { class: 'light', onclick: () => goTab('jadwal') }, 'Atur jadwal'));
+  }
+  if (!nx) return el('div', { class: 'hero' }, el('h3', {}, 'Belum ada sesi terjadwal'), el('div', { class: 'muted' }, 'Hubungi trainer untuk menjadwalkan sesi latihanmu.'));
+  return el('div', { class: 'hero' }, el('h3', {}, 'Sesi latihan berikutnya'),
+    el('div', { class: 'muted' }, hariTgl(nx.tanggal) + ' · ' + nx.mulai + '-' + nx.selesai),
+    el('button', { class: 'light', onclick: () => { RESCH_ID = nx.id; TAB = 'jadwal'; render(); } }, 'Ubah jadwal'));
+}
+
 function viewRingkasan() {
-  const out = [];
+  const out = [heroCard()];
   if (isTrainer()) out.push(addClientCard());
   if (!S.clients.length) {
     out.push(el('div', { class: 'empty' }, isTrainer()
@@ -764,43 +805,64 @@ function addJadwalCard() {
     btn);
 }
 
-function reschedCard(j) {
+function reschedCard(j, byTrainer) {
   const d = el('input', { type: 'date', min: today(), value: j.tanggal });
   const m = el('input', { type: 'time', value: j.mulai });
   const s = el('input', { type: 'time', value: j.selesai });
-  const save = el('button', { class: 'primary' }, 'Simpan jadwal baru');
+  const prev = el('div', { class: 'preview' });
+  const upd = () => { prev.textContent = d.value ? 'Jadwal baru: ' + hariTgl(d.value) + ' · ' + (m.value || '--') + '-' + (s.value || '--') : ''; };
+  [d, m, s].forEach(i => { i.oninput = upd; }); upd();
+
+  const c0 = S.clients.find(x => x.email === j.clientEmail) || S.clients[0] || {};
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i + 1));
+  const slots = [...new Set(rutinOf(c0).map(x => x.mulai + '|' + x.selesai).concat([j.mulai + '|' + j.selesai]))];
+  const chipD = el('div', { class: 'chips' }, days.map(t =>
+    el('button', { onclick: () => { d.value = t; upd(); } }, HARI[dayOf(t)].slice(0, 3) + ' ' + t.slice(8) + '/' + t.slice(5, 7))));
+  const chipT = el('div', { class: 'chips' }, slots.map(x => {
+    const [a, b] = x.split('|');
+    return el('button', { onclick: () => { m.value = a; s.value = b; upd(); } }, a + '–' + b);
+  }));
+
+  const save = el('button', { class: 'primary' }, byTrainer ? 'Simpan perubahan' : 'Simpan jadwal baru');
   save.onclick = async () => {
     if (!d.value || !m.value || !s.value) return alert('Tanggal dan jam wajib diisi.');
     if (d.value < today()) return alert('Tanggal tidak boleh di masa lalu.');
     if (s.value <= m.value) return alert('Jam selesai harus lebih besar dari jam mulai.');
     if (d.value === j.tanggal && m.value === j.mulai && s.value === j.selesai) return alert('Jadwal belum diubah.');
+    if (byTrainer) {
+      const bt = bentrok(d.value, m.value, s.value, j.clientEmail, j.id);
+      if (bt.length && !confirm('Bentrok dengan: ' + bt.map(x => x.clientNama + ' (' + x.mulai + '-' + x.selesai + ')').join(', ') + '.\nTetap simpan?')) return;
+    }
     save.disabled = true;
+    const patch = { tanggal: d.value, mulai: m.value, selesai: s.value };
+    if (byTrainer) {
+      await act(async () => { await updateDoc(doc(db, 'jadwal', j.id), patch); RESCH_ID = null; });
+      return;
+    }
     const nama = (S.clients[0] && S.clients[0].nama) || j.clientNama;
     const ok = await act(async () => {
       await runBatched([
-        b => b.update(doc(db, 'jadwal', j.id), {
-          tanggal: d.value, mulai: m.value, selesai: s.value,
-          diubahClient: true, tanggalAsal: j.tanggal, mulaiAsal: j.mulai, selesaiAsal: j.selesai
-        }),
+        b => b.update(doc(db, 'jadwal', j.id), { ...patch, diubahClient: true, tanggalAsal: j.tanggal, mulaiAsal: j.mulai, selesaiAsal: j.selesai }),
         b => b.set(doc(collection(db, 'notif')), {
           tipe: 'reschedule', clientEmail: j.clientEmail, clientNama: nama, jadwalId: j.id,
-          dari: { tanggal: j.tanggal, mulai: j.mulai, selesai: j.selesai },
-          ke: { tanggal: d.value, mulai: m.value, selesai: s.value },
+          dari: { tanggal: j.tanggal, mulai: j.mulai, selesai: j.selesai }, ke: patch,
           dibuat: new Date().toISOString(), dibaca: false
         })
       ]);
       RESCH_ID = null;
     });
-    if (ok) alert('Jadwal berhasil diubah. Trainer sudah mendapat pemberitahuan.');
+    if (ok) alert('Jadwal berhasil diubah. Trainer sudah mendapat pemberitahuan. Kuota visit tidak berkurang.');
   };
-  return el('div', { class: 'card item' },
-    el('b', {}, 'Ubah jadwal'),
-    el('div', { class: 'muted', style: 'margin-bottom:6px' }, 'Sekarang: ' + hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
-    el('label', {}, 'Tanggal baru'), d,
-    el('div', { class: 'two' },
-      el('div', {}, el('label', {}, 'Jam mulai'), m),
-      el('div', {}, el('label', {}, 'Jam selesai'), s)),
-    el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Trainer akan mendapat pemberitahuan tentang perubahan ini.'),
+
+  return el('div', { class: byTrainer ? 'jclient' : 'card item' },
+    el('b', {}, byTrainer ? 'Ubah jadwal ' + j.clientNama : 'Ubah jadwal'),
+    el('div', { class: 'muted' }, 'Sekarang: ' + hariTgl(j.tanggal) + ' · ' + j.mulai + '-' + j.selesai),
+    el('div', { class: 'note' }, '✓ Mengubah jadwal tidak mengurangi kuota visit.'),
+    el('label', {}, 'Pilih tanggal'), chipD, d,
+    el('label', {}, 'Pilih jam'), chipT,
+    el('div', { class: 'two' }, el('div', {}, el('label', {}, 'Jam mulai'), m), el('div', {}, el('label', {}, 'Jam selesai'), s)),
+    prev,
+    byTrainer ? null : el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Trainer akan mendapat pemberitahuan.'),
     save,
     el('button', { class: 'link', onclick: () => { RESCH_ID = null; render(); } }, 'Batal'));
 }
@@ -809,6 +871,10 @@ function reschedCard(j) {
 function statusHandler(j) {
   return async v => {
     await updateDoc(doc(db, 'jadwal', j.id), { status: v });
+    const vis = S.visit.filter(x => x.jadwalId === j.id);
+    if (v !== 'Selesai' && vis.length && confirm('Sesi ini sebelumnya tercatat sebagai visit. Hapus catatan visit agar kuota kembali?')) {
+      for (const x of vis) await deleteDoc(doc(db, 'visit', x.id));
+    }
     const c = S.clients.find(x => x.email === j.clientEmail);
     if (v === 'Selesai' && c && Number(c.coaching) > 0 && !S.visit.some(x => x.jadwalId === j.id)
         && confirm('Catat sebagai 1 visit untuk ' + j.clientNama + '?')) {
@@ -843,12 +909,14 @@ function dateCard(tgl, list) {
       pending.length > 1 ? el('button', { class: 'link', onclick: () => selesaiSemua(pending) }, 'Semua selesai') : null)
   ];
   list.forEach(j => {
+    if (RESCH_ID === j.id) { kids.push(reschedCard(j, true)); return; }
     const detail = [j.jenis, j.lokasi].filter(Boolean).join(' · ');
     kids.push(el('div', { class: 'jclient' },
       el('div', { class: 'row' },
         el('div', {}, el('span', { class: 'name' }, j.clientNama), sameTime ? null : el('span', { class: 'muted' }, ' · ' + j.mulai + '-' + j.selesai)),
         el('div', { class: 'inl' },
           el('div', { class: 'item' }, statusSelect(['Terjadwal', 'Selesai', 'Batal'], j.status, statusHandler(j))),
+          j.status === 'Terjadwal' ? el('button', { class: 'link', onclick: () => { RESCH_ID = j.id; render(); } }, 'Ubah') : null,
           delBtn('jadwal', j.id))),
       detail ? el('div', { class: 'muted' }, detail) : null,
       j.catatan ? el('div', { class: 'muted' }, 'Catatan: ' + j.catatan) : null,
@@ -863,6 +931,12 @@ function viewJadwal() {
   if (T) {
     if (!S.clients.length) out.push(el('div', { class: 'empty' }, 'Tambahkan client dulu di tab Ringkasan.'));
     else out.push(addJadwalCard());
+  }
+  if (!T && S.clients[0]) {
+    const sm = summaryOf(S.clients[0]);
+    if (sm.kuota > 0) out.push(el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('b', {}, 'Kuota visit'), el('span', { class: 'badge ok' }, 'Sisa ' + Math.max(0, sm.sisa) + ' dari ' + sm.kuota)),
+      el('div', { class: 'note' }, '✓ Mengubah jadwal tidak mengurangi kuota visit. Kuota baru terpakai setelah sesi selesai.')));
   }
   if (!S.jadwal.length) out.push(el('div', { class: 'empty' }, 'Belum ada jadwal.'));
 
